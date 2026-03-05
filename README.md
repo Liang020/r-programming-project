@@ -33,7 +33,7 @@ See `data/README.md` for instructions.
 ---
 
 ## Report
-- HTML report: see instructions below to view via GitHub Pages (recommended), or download from the repo after enabling Pages.
+- Live HTML report (GitHub Pages): https://liang020.github.io/r-programming-project/
 
 ## Reproducibility (summary)
 Open `Final_Project.rmd` and run the analysis end-to-end.  
