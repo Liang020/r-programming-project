@@ -15,9 +15,9 @@ See `data/README.md` for instructions.
 - Visualize results via map, ranking, and case studies
 
 ## Key results (2–3 takeaways)
-- States vary substantially in within-state peak synchrony (IQR ranges widely across states).
-- A clear top/bottom ranking emerges, highlighting states with the most vs. least synchronized county peaks.
-- Case-study states illustrate how tighter clustering of county peak dates corresponds to stronger synchrony.
+- Within-state peak timing varies widely: the state-level IQR of county peak dates ranges from **near 0 days** (high synchrony) up to **~20.5 days** (low synchrony).  [oai_citation:0‡Final-Project_Liang-Hong_lh4195.pdf](sediment://file_00000000060071fda3242deb353d5f22)
+- **Idaho** shows the largest within-state dispersion (**IQR = 20.5 days**), followed by **South Carolina (14.0)** and **Virginia (11.25)**, indicating substantially less synchronized county peaks.  [oai_citation:1‡Final-Project_Liang-Hong_lh4195.pdf](sediment://file_00000000060071fda3242deb353d5f22)
+- The most synchronized states (e.g., **Louisiana** and **Utah**) have IQR values **close to 0**, and the case study contrasts **Idaho (widely spread peaks)** vs. **Alabama (tight late-January cluster)** with **North Dakota** in between.  [oai_citation:2‡Final-Project_Liang-Hong_lh4195.pdf](sediment://file_00000000060071fda3242deb353d5f22)
 
 ---
 
