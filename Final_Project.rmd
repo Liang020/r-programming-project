@@ -1,0 +1,234 @@
+---
+title: "Final Project"
+author: "Liang Hong,lh4195"
+date: "2025-12-14"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+# Synopsis
+
+The COVID-19 “peak” is often described using national or state totals, but those summaries can hide local differences. Counties in the same state can reach their worst point at different times. When that happens, a single state-level curve can make the surge look more uniform than it really was. In this project, I measure how different the peak timing is across counties within each state.
+
+I use cumulative COVID-19 case data from The New York Times (downloaded via Brightspace). I convert cumulative cases to daily new cases for each county. I then smooth daily new cases with a 7-day rolling average to reduce day-to-day noise. I define the U.S. peak date as the day when the national 7-day average is highest. I focus on a shared national-wave window that runs 90 days before and 90 days after that date. Within this window, I define each county’s peak date as the day when its 7-day average is highest.
+
+I summarize each state using the interquartile range (IQR, in days) of its counties’ peak dates. The IQR is the gap between the 75th and 25th percentiles. A larger IQR means counties in that state peaked farther apart in time, so the state was less “in sync” during the national surge. I present a U.S. map of these IQR values, a ranking of states, and a few case-study plots that show what high versus low synchrony looks like.
+
+# Packages Required
+
+To reproduce the code and results, you will need the following packages:
+```{r}
+library(tidyverse)   # data wrangling + ggplot2
+library(lubridate)   # date handling
+library(zoo)         # rolling mean
+library(usmap)       # US maps for states
+library(knitr)      # tables (kable)
+```
+
+# Data Preparation
+
+## Loading Data
+
+The analysis uses at least two of the required datasets:
+1. us.csv (national)
+2. us-counties-all.csv (county)
+```{r}
+us <- readr::read_csv("/Users/lianghong/Desktop/R Programming-Project/data/us.csv", show_col_types = FALSE) %>%
+  dplyr::mutate(date = as.Date(date))
+
+cty <- readr::read_csv("/Users/lianghong/Desktop/R Programming-Project/data/us-counties-all.csv", show_col_types = FALSE) %>%
+  dplyr::mutate(date = as.Date(date))
+```
+
+## Creating Tidy Data
+
+After loading The New York Times' county-level COVID-19 dataset, I converted cumulative case counts into a clean format to identify peak timing. Since cases are cumulative, I calculated daily new cases using first differences and smoothed each county's sequence with a 7-day rolling average to reduce reporting noise. To ensure comparability of peak timing across regions, I focused on a common national wave window centered around the U.S. peak date (±90 days). Within this window, I defined each county's “peak date” as the day with the highest 7-day average of new cases. I then quantified intra-state asynchrony using the interquartile range (IQR, in days) of county peak dates; a larger IQR indicates lower intra-state synchrony. For stability, counties with limited valid observations or very small peaks were excluded.
+```{r}
+# -----------------------------
+# Step 1: Basic cleaning (keep)
+# -----------------------------
+cty_clean <- cty %>%
+  dplyr::filter(!(county == "Unknown" & is.na(fips))) %>%
+  dplyr::arrange(state, county, fips, date)
+
+# -----------------------------
+# Step 2: Build US reference series and define the national-wave window
+# -----------------------------
+us_roll <- us %>%
+  dplyr::arrange(date) %>%
+  dplyr::mutate(
+    new_cases = cases - dplyr::lag(cases),
+    new_cases = dplyr::if_else(new_cases < 0, NA_real_, new_cases),
+    roll7     = zoo::rollmean(new_cases, k = 7, fill = NA, align = "right")
+  )
+
+us_peak_date <- us_roll$date[which.max(us_roll$roll7)]
+
+window_days <- 90
+win_start <- us_peak_date - window_days
+win_end   <- us_peak_date + window_days
+
+# -----------------------------
+# Step 3: Create county daily new cases + 7-day rolling average
+# -----------------------------
+cty_roll <- cty_clean %>%
+  dplyr::group_by(state, county, fips) %>%
+  dplyr::mutate(
+    new_cases = cases - dplyr::lag(cases),
+    new_cases = dplyr::if_else(new_cases < 0, NA_real_, new_cases),
+    roll7     = zoo::rollmean(new_cases, k = 7, fill = NA, align = "right")
+  ) %>%
+  dplyr::ungroup()
+
+# -----------------------------
+# Step 4: Extract county peak timing WITHIN the national-wave window
+# -----------------------------
+cty_peaks <- cty_roll %>%
+  dplyr::filter(date >= win_start, date <= win_end) %>%
+  dplyr::group_by(state, county, fips) %>%
+  dplyr::summarise(
+    peak_roll7 = max(roll7, na.rm = TRUE),
+    peak_date  = date[which.max(roll7)],
+    n_nonmiss  = sum(!is.na(roll7)),
+    .groups = "drop"
+  ) %>%
+  # drop counties that have no usable info within the window
+  dplyr::filter(is.finite(peak_roll7), n_nonmiss >= 14, peak_roll7 >= 5)
+
+# -----------------------------
+# Step 5: Summarise within-state dispersion of county peak dates (window-specific)
+# -----------------------------
+state_disp <- cty_peaks %>%
+  dplyr::group_by(state) %>%
+  dplyr::summarise(
+    n_counties = dplyr::n(),
+    iqr_days   = as.numeric(IQR(peak_date)),
+    range_days = as.numeric(max(peak_date) - min(peak_date)),
+    .groups = "drop"
+  ) %>%
+  dplyr::filter(n_counties >= 20)
+
+# Quick preview
+state_disp %>%
+  dplyr::arrange(desc(iqr_days)) %>%
+  dplyr::slice(1:10) %>%
+  knitr::kable(caption = "Table 1: Within-state peak-date dispersion (IQR days) during the national-wave window.")
+```
+Table 1 provides a preview of the state-level metrics used in this study. Iqr_days captures the distribution of peak dates across counties within each state during the national wave window; higher values indicate less synchronization within the state. Results indicate that even within waves across the same country, some states' counties peaked within roughly one week, while others' peaks were distributed over approximately two to three weeks. Range_days highlights other extremes exceeding the median 50% of counties, and n_counties indicates how many counties were used to calculate each state's aggregate.
+
+# Exploratory Data Analysis
+This analysis assessed synchronized county-level COVID-19 peaks within each state during the nationwide surge. I first presented the 7-day average of new cases in the United States and the national wave window (U.S. peak ±90 days). Subsequently, I mapped and ranked states based on the interquartile range (IQR) of peak dates within each state. Finally, I illustrated the pattern using a study of county-level cases.
+
+## National-Level Patterns
+To provide context for the window used in this study, Figure 1 plots the U.S. daily new cases (7-day rolling average).
+```{r}
+us_roll_plot <- us_roll %>% dplyr::filter(!is.na(roll7))
+ggplot(us_roll_plot, aes(x = date, y = roll7)) +
+  geom_line() +
+  geom_vline(xintercept = us_peak_date, linetype = 2) +
+  annotate("rect",
+           xmin = win_start, xmax = win_end,
+           ymin = -Inf, ymax = Inf,
+           alpha = 0.10) +
+  labs(
+    title = "Figure 1: U.S. daily new cases (7-day rolling average)",
+    subtitle = "National-wave window centered at the U.S. peak date (±90 days)",
+    x = "Date", y = "Daily new cases (7-day avg)"
+  ) +
+  theme_minimal()
+```
+The dashed line indicates the peak date in the United States based on the maximum 7-day average of daily new cases. The shaded area represents the ±90-day national wave window used in this study. County peak dates were determined within this window to enable comparisons within states during the same national peak period.
+
+## State-Level Patterns
+After extracting the peak dates for each county within the national wave window, I used the interquartile range (IQR) of county peak dates (in days) to summarize synchrony within states. Larger IQR values indicate that counties within the same state reached their peaks at more divergent times (lower synchrony). Figure 2 plots the distribution across U.S. states.
+```{r}
+plot_usmap(data = state_disp, values = "iqr_days", regions = "states") +
+  labs(
+    title = "Figure 2: Within-state peak-date dispersion during the national-wave window",
+    subtitle = "Metric: IQR of county peak dates (days). Larger = less within-state synchrony.",
+    fill = "IQR days"
+  ) +
+  theme(legend.position = "right")
+ggsave("figures/fig2_state_iqr_map.png", plot = last_plot(), width = 10, height = 6, dpi = 300)
+```
+Figure 2 displays the interquartile range of peak dates within counties during the national wave window (iqr_days). Lighter colors indicate larger IQRs (less synchronized peak timing across counties), while darker colors indicate smaller IQRs (more synchronized peak timing). Grayed-out states are excluded from the summary due to missing/insufficient data after filtering.
+
+To supplement this map, Table 1 provides a preview of the states with the greatest intra-state variation (top 10 ranked by iqr_days). These states exhibited the most asynchronous peak timing across counties during the national wave window period.
+```{r}
+state_disp %>%
+  dplyr::arrange(desc(iqr_days)) %>%
+  dplyr::slice(1:10) %>%
+  knitr::kable(
+    caption = "Table 1: States with the largest within-state peak-date dispersion (Top 10 by IQR days)."
+  )
+```
+Table 1 shows that Idaho has the highest IQR (20.5 days), indicating that approximately 50% of its counties reached their peak roughly three weeks apart. In contrast, several other states have IQR values around 10–14 days. In many cases, range_days is significantly larger than iqr_days, suggesting that even during the same nationwide surge, a minority of counties peaked much earlier or later than the majority.
+
+Figure 3 directly compares the most and least synchronized states by plotting the top 10 and bottom 10 states sorted by iqr_days. This makes it easier to see how much dispersion varies across different states.
+```{r}
+top10 <- state_disp %>% dplyr::arrange(desc(iqr_days)) %>% dplyr::slice(1:10)
+bot10 <- state_disp %>% dplyr::arrange(iqr_days) %>% dplyr::slice(1:10)
+
+rank_df <- dplyr::bind_rows(
+  top10 %>% dplyr::mutate(group = "Most non-synchronized (Top 10)"),
+  bot10 %>% dplyr::mutate(group = "Most synchronized (Bottom 10)")
+) %>%
+  dplyr::mutate(state = forcats::fct_reorder(state, iqr_days))
+
+ggplot(rank_df, aes(x = state, y = iqr_days)) +
+  geom_col() +
+  coord_flip() +
+  facet_wrap(~group, scales = "free_y") +
+  labs(
+    title = "Figure 3: State ranking by within-state peak-date dispersion",
+    x = NULL, y = "IQR of county peak dates (days)"
+  ) +
+  theme_minimal()
+ggsave("figures/fig3_top_bottom10.png", plot = last_plot(), width = 10, height = 6, dpi = 300)
+```
+Figure 3 ranks states based on intra-state dispersion of peak timing across counties during the national wave window. Idaho exhibits the largest IQR (approximately 20 days), indicating the least synchronized peak timing across counties, followed by states such as South Carolina and Virginia. In contrast, the most synchronized states (e.g., Louisiana and Utah) have IQR values close to zero, suggesting that peak dates across counties cluster tightly within a very narrow time span.
+
+## Case Studies
+Finally, Figure 4 displays the peak dates for counties in three representative states: one with the highest dispersion, one near the median, and one with the lowest dispersion. Closer clustering indicates stronger synchrony within the state, while a wider distribution suggests more staggered peak timing across counties.
+```{r}
+mid_state <- state_disp %>%
+  dplyr::arrange(iqr_days) %>%
+  dplyr::slice(round(dplyr::n()/2)) %>%
+  dplyr::pull(state)
+
+picked_states <- c(
+  state_disp %>% dplyr::arrange(desc(iqr_days)) %>% dplyr::slice(1) %>% dplyr::pull(state),
+  mid_state,
+  state_disp %>% dplyr::arrange(iqr_days) %>% dplyr::slice(1) %>% dplyr::pull(state)
+)
+
+cty_peaks %>%
+  dplyr::filter(state %in% picked_states) %>%
+  dplyr::mutate(state = factor(state, levels = picked_states)) %>%
+  ggplot(aes(x = peak_date, y = state)) +
+  geom_jitter(height = 0.18, width = 0, alpha = 0.6) +
+  labs(
+    title = "Figure 4: County peak dates within selected states",
+    subtitle = "Tighter clustering indicates greater within-state synchrony",
+    x = "County peak date", y = NULL
+  ) +
+  theme_minimal()
+ggsave("figures/fig4_case_study_states.png", plot = last_plot(), width = 10, height = 6, dpi = 300)
+```
+Figure 4 shows that among the three representative states, Alabama experienced a concentrated cluster of cases in late January, indicating high synchrony within the state. In contrast, Idaho's peak dates were more widely distributed, extending into February and March, consistent with lower synchrony. North Dakota fell between these two patterns, with most counties peaking around late January but exhibiting a more dispersed distribution than Alabama.
+
+# Summary
+This project asked whether counties within the same U.S. state reached their COVID-19 peak at about the same time during a major national surge. State-level totals can hide these local timing differences. I used The New York Times cumulative case data (downloaded via Brightspace). I converted cumulative cases to daily new cases, smoothed the daily series with a 7-day rolling average, and found the U.S. peak date from the national curve (Figure 1). I then analyzed a shared national-wave window that spans 90 days before and 90 days after that date. Within this window, I defined each county’s peak date as the day with the highest 7-day average of new cases. After I removed counties with too little or unstable data, I measured within-state timing differences using the IQR of county peak dates (iqr_days). I also used range_days to show the full gap from the earliest to the latest county peak.
+
+The results show strong differences across states. Idaho has the largest within-state spread in peak timing, while Louisiana is one of the most in sync (IQR near 0) (Figures 2–3; Table 1). Figure 4 shows what this looks like: in some states, county peak dates cluster tightly, but in others they are more spread out. These patterns suggest that a single “state peak” can miss important within-state differences, which can affect how people read state trends and when local responses should happen.
+
+This analysis has limits. Peak dates come from a single highest point, so reporting noise can shift them. The results also depend on the ±90-day window and the filtering rules. This project also focuses only on timing, not peak size or outcomes such as hospitalizations. Future work can try different window widths and peak rules, and repeat the same approach for multiple waves.
